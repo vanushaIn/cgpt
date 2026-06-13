@@ -1,4 +1,4 @@
-const { getAuth, isFirebaseConfigured } = require('./lib/firebase-admin');
+const { getAuth } = require('./lib/firebase-admin');
 const {
   getAnonStatus,
   incrementAnon,
@@ -23,11 +23,17 @@ function json(statusCode, body) {
   };
 }
 
+function getHeader(event, name) {
+  const h = event.headers || {};
+  const lower = name.toLowerCase();
+  return h[lower] ?? h[name] ?? '';
+}
+
 function getClientIp(event) {
   return (
-    event.headers['x-nf-client-connection-ip']
-    || event.headers['client-ip']
-    || event.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    getHeader(event, 'x-nf-client-connection-ip')
+    || getHeader(event, 'client-ip')
+    || getHeader(event, 'x-forwarded-for').split(',')[0]?.trim()
     || 'unknown'
   );
 }
@@ -42,9 +48,57 @@ async function verifyToken(authHeader) {
   }
 }
 
+function extractTextContent(content) {
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (part?.type === 'text' && part.text) return part.text;
+        if (part?.text) return part.text;
+        return '';
+      })
+      .join('')
+      .trim();
+  }
+  return '';
+}
+
+function extractReply(data) {
+  const message = data?.choices?.[0]?.message;
+  if (!message) return '';
+
+  const fromContent = extractTextContent(message.content);
+  if (fromContent) return fromContent;
+
+  const fromReasoning = extractTextContent(message.reasoning);
+  if (fromReasoning) return fromReasoning;
+
+  if (typeof message.reasoning_details === 'string') {
+    return message.reasoning_details.trim();
+  }
+
+  if (Array.isArray(message.reasoning_details)) {
+    return message.reasoning_details
+      .map((item) => extractTextContent(item?.text ?? item?.content ?? item))
+      .join('')
+      .trim();
+  }
+
+  return extractTextContent(data?.choices?.[0]?.text);
+}
+
 async function callOpenRouter(messages) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured');
+
+  const safeMessages = (messages || [])
+    .filter((m) => m && typeof m.content === 'string' && m.content.trim())
+    .map((m) => ({ role: m.role, content: m.content.trim() }));
+
+  if (safeMessages.length === 0) {
+    throw new Error('No valid messages to send');
+  }
 
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -58,22 +112,32 @@ async function callOpenRouter(messages) {
       model: MODEL,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        ...messages,
+        ...safeMessages,
       ],
       temperature: 0.7,
       max_tokens: 2048,
     }),
   });
 
-  const data = await response.json();
+  const raw = await response.text();
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new Error(`Invalid OpenRouter response: ${raw.slice(0, 200)}`);
+  }
 
   if (!response.ok) {
     const msg = data?.error?.message || `OpenRouter error ${response.status}`;
     throw new Error(msg);
   }
 
-  const reply = data.choices?.[0]?.message?.content;
-  if (!reply) throw new Error('Empty response from AI');
+  const reply = extractReply(data);
+  if (!reply) {
+    console.error('Unexpected OpenRouter payload:', JSON.stringify(data).slice(0, 500));
+    throw new Error('Empty response from AI');
+  }
+
   return reply;
 }
 
@@ -93,11 +157,11 @@ exports.handler = async (event) => {
     return json(400, { error: 'Invalid JSON' });
   }
 
-  const decoded = await verifyToken(event.headers.authorization || event.headers.Authorization);
+  const authHeader = getHeader(event, 'authorization');
+  const decoded = await verifyToken(authHeader);
   const ip = getClientIp(event);
-  const anonId = event.headers['x-anon-id'] || event.headers['X-Anon-Id'] || '';
+  const anonId = getHeader(event, 'x-anon-id');
 
-  // Status check (no message sent)
   if (body.action === 'status') {
     if (decoded) {
       const status = await getUserStatus(decoded.uid);

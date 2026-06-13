@@ -1,8 +1,10 @@
 function formatContent(text) {
-  return text.split('\n').map((line, i) => (
+  const safe = typeof text === 'string' ? text : String(text ?? '');
+  const lines = safe.split('\n');
+  return lines.map((line, i) => (
     <span key={i}>
       {line}
-      {i < text.split('\n').length - 1 && <br />}
+      {i < lines.length - 1 && <br />}
     </span>
   ));
 }

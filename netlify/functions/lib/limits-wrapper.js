@@ -35,11 +35,21 @@ function getFirestoreLimits() {
   return firestoreLimits;
 }
 
+async function useFirestore() {
+  if (!isFirebaseConfigured()) return false;
+  try {
+    const limits = getFirestoreLimits();
+    return limits.initializeFirebase();
+  } catch {
+    return false;
+  }
+}
+
 async function getAnonStatus(ip, anonId) {
   const today = todayKey();
   const key = `anon:${ip}_${anonId || 'default'}`;
 
-  if (!isFirebaseConfigured()) {
+  if (!(await useFirestore())) {
     const used = memoryGet(key, today);
     return {
       used,
@@ -52,7 +62,21 @@ async function getAnonStatus(ip, anonId) {
     };
   }
 
-  return { ...await getFirestoreLimits().getAnonStatus(ip, anonId), mode: 'firestore' };
+  try {
+    return { ...await getFirestoreLimits().getAnonStatus(ip, anonId), mode: 'firestore' };
+  } catch (err) {
+    console.error('Firestore anon status failed, using memory:', err.message);
+    const used = memoryGet(key, today);
+    return {
+      used,
+      limit: ANON_LIMIT,
+      remaining: Math.max(0, ANON_LIMIT - used),
+      allowed: used < ANON_LIMIT,
+      memoryKey: key,
+      today,
+      mode: 'memory',
+    };
+  }
 }
 
 async function incrementAnon(status) {
@@ -67,7 +91,7 @@ async function getUserStatus(uid) {
   const today = todayKey();
   const key = `user:${uid}`;
 
-  if (!isFirebaseConfigured()) {
+  if (!(await useFirestore())) {
     const used = memoryGet(key, today);
     return {
       used,
@@ -81,7 +105,22 @@ async function getUserStatus(uid) {
     };
   }
 
-  return { ...await getFirestoreLimits().getUserStatus(uid), mode: 'firestore' };
+  try {
+    return { ...await getFirestoreLimits().getUserStatus(uid), mode: 'firestore' };
+  } catch (err) {
+    console.error('Firestore user status failed, using memory:', err.message);
+    const used = memoryGet(key, today);
+    return {
+      used,
+      limit: AUTH_LIMIT,
+      remaining: Math.max(0, AUTH_LIMIT - used),
+      allowed: used < AUTH_LIMIT,
+      memoryKey: key,
+      today,
+      mode: 'memory',
+      uid,
+    };
+  }
 }
 
 async function incrementUser(status, decoded) {

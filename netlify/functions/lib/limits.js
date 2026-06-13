@@ -1,4 +1,4 @@
-const { getDb } = require('./firebase-admin');
+const { getDb, initializeFirebase } = require('./firebase-admin');
 
 const ANON_LIMIT = 5;
 const AUTH_LIMIT = 15;
@@ -11,8 +11,16 @@ function needsReset(lastResetDate) {
   return lastResetDate !== todayKey();
 }
 
-async function getAnonStatus(ip, anonId) {
+function requireDb() {
   const db = getDb();
+  if (!db) {
+    throw new Error('Firestore unavailable');
+  }
+  return db;
+}
+
+async function getAnonStatus(ip, anonId) {
+  const db = requireDb();
   const docId = `${ip}_${anonId || 'default'}`.replace(/[^a-zA-Z0-9._-]/g, '_');
   const ref = db.collection('anonymous_limits').doc(docId);
   const snap = await ref.get();
@@ -49,7 +57,7 @@ async function incrementAnon(ref, today) {
 }
 
 async function getUserStatus(uid) {
-  const db = getDb();
+  const db = requireDb();
   const ref = db.collection('users').doc(uid);
   const snap = await ref.get();
   const today = todayKey();
@@ -98,4 +106,5 @@ module.exports = {
   incrementAnon,
   getUserStatus,
   incrementUser,
+  initializeFirebase,
 };

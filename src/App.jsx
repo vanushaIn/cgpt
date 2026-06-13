@@ -57,7 +57,7 @@ export default function App() {
     setLimitError(null);
     setIsLoading(true);
 
-    const history = [...activeChat.messages, { role: 'user', content: text }];
+    const history = [...(activeChat?.messages ?? []), { role: 'user', content: text }];
     addMessage('user', text);
 
     try {

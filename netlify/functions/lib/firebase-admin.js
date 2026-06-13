@@ -1,6 +1,15 @@
 const admin = require('firebase-admin');
 
 let db = null;
+let initFailed = false;
+
+function parsePrivateKey() {
+  let key = process.env.FIREBASE_PRIVATE_KEY || '';
+  if (key.startsWith('"') && key.endsWith('"')) {
+    key = key.slice(1, -1);
+  }
+  return key.replace(/\\n/g, '\n');
+}
 
 function isFirebaseConfigured() {
   return Boolean(
@@ -10,34 +19,43 @@ function isFirebaseConfigured() {
   );
 }
 
-function getDb() {
-  if (!isFirebaseConfigured()) return null;
-  if (db) return db;
+function initializeFirebase() {
+  if (db) return true;
+  if (initFailed) return false;
+  if (!isFirebaseConfigured()) return false;
 
-  if (!admin.apps.length) {
-    const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey,
-      }),
-    });
+  try {
+    if (!admin.apps || admin.apps.length === 0) {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: parsePrivateKey(),
+        }),
+      });
+    }
+    db = admin.firestore();
+    return true;
+  } catch (err) {
+    console.error('Firebase init failed:', err.message);
+    initFailed = true;
+    return false;
   }
+}
 
-  db = admin.firestore();
-  return db;
+function getDb() {
+  return initializeFirebase() ? db : null;
 }
 
 function getAuth() {
-  if (!isFirebaseConfigured()) {
+  if (!initializeFirebase()) {
     return {
-      verifyIdToken: async () => { throw new Error('Firebase not configured'); },
+      verifyIdToken: async () => {
+        throw new Error('Firebase not configured');
+      },
     };
   }
-  if (!admin.apps.length) getDb();
   return admin.auth();
 }
 
-module.exports = { getDb, getAuth, admin, isFirebaseConfigured };
+module.exports = { getDb, getAuth, admin, isFirebaseConfigured, initializeFirebase };

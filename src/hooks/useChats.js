@@ -76,8 +76,8 @@ export function useChats() {
     setState((prev) => {
       const chats = prev.chats.map((chat) => {
         if (chat.id !== prev.activeChatId) return chat;
-        const messages = [...chat.messages, { role, content }];
-        const title = chat.messages.length === 0 && role === 'user'
+        const messages = [...(chat.messages || []), { role, content }];
+        const title = (!chat.messages || chat.messages.length === 0) && role === 'user'
           ? content.slice(0, 40) + (content.length > 40 ? '…' : '')
           : chat.title;
         return { ...chat, messages, title, updatedAt: Date.now() };
