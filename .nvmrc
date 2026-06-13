@@ -1,0 +1,1 @@
+"22" | Out-File -FilePath .nvmrc -Encoding utf8NoBOM
